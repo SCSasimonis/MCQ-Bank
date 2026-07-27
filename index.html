@@ -152,6 +152,16 @@
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
   .chip{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:6px 12px;cursor:pointer;font-size:13px}
   .chip:hover{border-color:var(--accent)}
+  .chip.drilled{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+  .pbar{position:relative}
+  .ptick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--muted);opacity:.6}
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 4px}
+  .stat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;
+    background:var(--card);border:1px solid var(--line);border-radius:9px}
+  .statn{font:700 18px/1 ui-monospace,Menlo,monospace}
+  .statl{font:10.5px/1.2 ui-monospace,Menlo,monospace;color:var(--muted);text-align:center;letter-spacing:.02em}
+  .pace-ok{color:var(--ok)} .pace-behind{color:var(--no)}
+  @media (max-width:420px){.statgrid{grid-template-columns:repeat(2,1fr)}}
   @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
 </style>
 </head>
@@ -14415,7 +14425,39 @@ function currentPlanDay(){
 function planStats(){
   var p = planState(), done=0;
   for(var k in p.done){ if(p.done[k]) done++; }
-  return {done:done, total:100, pct:Math.round(done/100*100)};
+
+  var today = currentPlanDay();
+  /* "expected" = how many days should be done if fully on pace.
+     Day N is behind you once you're on day N+1, so expected = today-1,
+     clamped to 0..100. On day 1 nothing is overdue yet. */
+  var expected = Math.max(0, Math.min(100, today - 1));
+  var onPace = done - expected;   /* + ahead, - behind */
+
+  /* streak: consecutive completed days counting back from the latest
+     completed day (not calendar today, so a user who did days 1-5 in one
+     sitting still shows a 5-day streak). */
+  var streak = 0;
+  for(var d=100; d>=1; d--){
+    if(p.done[d]){
+      streak = 1;
+      for(var e=d-1; e>=1; e--){ if(p.done[e]) streak++; else break; }
+      break;
+    }
+  }
+
+  /* average MCQ score across attempted MCQ days */
+  var sumR=0, sumT=0, mcqDays=0;
+  for(var m in p.mcqScores){
+    if(p.mcqScores.hasOwnProperty(m)){
+      var s=p.mcqScores[m];
+      sumR += (s.best!==undefined?s.best:s.right); sumT += s.total; mcqDays++;
+    }
+  }
+  var avgPct = sumT ? Math.round(sumR/sumT*100) : null;
+
+  return {done:done, total:100, pct:Math.round(done/100*100),
+          today:today, expected:expected, onPace:onPace,
+          streak:streak, avgPct:avgPct, mcqDays:mcqDays};
 }
 
 /* ---- render the plan home screen ---- */
@@ -14462,17 +14504,31 @@ function renderPlan(){
       '</button>';
   }
 
+  var paceLabel, paceCls;
+  if(st.onPace === 0){ paceLabel = "on pace"; paceCls = "pace-ok"; }
+  else if(st.onPace > 0){ paceLabel = st.onPace + " day" + (st.onPace>1?"s":"") + " ahead"; paceCls = "pace-ok"; }
+  else { paceLabel = Math.abs(st.onPace) + " day" + (Math.abs(st.onPace)>1?"s":"") + " behind"; paceCls = "pace-behind"; }
+
+  var statChips =
+    '<div class="statgrid">' +
+      '<div class="stat"><span class="statn">'+st.done+'</span><span class="statl">days done</span></div>' +
+      '<div class="stat"><span class="statn '+paceCls+'">'+(st.onPace>=0?"+":"")+st.onPace+'</span><span class="statl">'+paceLabel+'</span></div>' +
+      '<div class="stat"><span class="statn">'+st.streak+'</span><span class="statl">day streak</span></div>' +
+      '<div class="stat"><span class="statn">'+(st.avgPct!==null?st.avgPct+"%":"\u2013")+'</span><span class="statl">avg MCQ</span></div>' +
+    '</div>';
+
   view.innerHTML =
     '<div class="card planhero">' +
       '<div class="planheadrow"><h2 class="serif">100-Day Plan</h2>' +
         '<span class="muted">Day '+today+' of 100 \u00b7 '+PHASES[planDayInfo(today)[3]]+'</span></div>' +
-      '<div class="pbar"><div class="pfill" style="width:'+st.pct+'%"></div></div>' +
+      '<div class="pbar"><div class="pfill" style="width:'+st.pct+'%"></div>' +
+        (st.expected>0 && st.expected<100 ? '<div class="ptick" style="left:'+st.expected+'%"></div>' : "") +
+      '</div>' +
+      statChips +
       '<div class="planmeta"><span>'+st.done+' of 100 days complete</span>' +
         '<button class="btn tiny" id="planJump">Go to today</button></div>' +
     '</div>' +
     '<div class="daylist" id="daylist">' + cards + '</div>';
-
-  var el = document.getElementById("day-"+today);
 }
 
 /* ---- a single day's detail / action ---- */
@@ -14489,12 +14545,18 @@ function openPlanDay(n){
       '<p class="muted">An MCQ set drawn from this bank across '+subj.name+' chapters. Your score is saved against the day.</p>' +
       '<button class="btn primary" id="planStartMcq">Start MCQ set ('+subj.name+')</button>';
   } else {
+    var drilled = (p.drilled && p.drilled[n]) ? p.drilled[n] : {};
     var chips = "";
     for(var i=0;i<subj.chapters.length;i++){
-      chips += '<button class="chip" data-planchap="'+subj.chapters[i]+'">'+esc(chapterName(subj.chapters[i]))+'</button>';
+      var cid = subj.chapters[i];
+      var dscore = drilled[cid];
+      var mark = dscore ? ' \u00b7 '+dscore.right+'/'+dscore.total : "";
+      var chipCls = dscore ? "chip drilled" : "chip";
+      chips += '<button class="'+chipCls+'" data-planchap="'+cid+'" data-planchapday="'+n+'">'+
+               esc(chapterName(cid))+mark+'</button>';
     }
     body =
-      '<p class="muted">A content review day for '+subj.name+'. Work the reference material in your Toronto Notes for these chapters, then drill any chapter here to check retention.</p>' +
+      '<p class="muted">A content review day for '+subj.name+'. Work the reference material in your Toronto Notes for these chapters, then drill any chapter here to check retention. Drilled chapters show your last score.</p>' +
       '<div class="chips">'+chips+'</div>';
   }
 
@@ -14528,7 +14590,7 @@ function startPlanMcq(n){
   state.idx = 0;
   state.label = "Day "+n+" \u00b7 "+subj.name+" MCQ";
   state.planDay = n;            /* tag so completion saves the score */
-  state.planRight = 0;
+  state.sessionRight = 0;       /* live tally reset for this session */
   renderQuestion();
 }
 
@@ -14663,6 +14725,9 @@ function startChapter(id){
   state.list = shuffle(qs);
   state.idx = 0;
   state.label = chapterName(id);
+  state.sessionRight = 0;
+  state.planChapDay = state.pendingPlanChapDay || 0;
+  state.pendingPlanChapDay = 0;
   renderQuestion();
 }
 
@@ -14681,6 +14746,7 @@ function startReview(){
   state.list = shuffle(qs);
   state.idx = 0;
   state.label = "Review mistakes";
+  state.sessionRight = 0;
   renderQuestion();
 }
 
@@ -14751,6 +14817,12 @@ function pick(i){
 
   PROGRESS[q.id] = { correct: correct, at: Date.now() };
   writeJSON(K_P, PROGRESS);
+
+  /* live per-session tally: this is what plan-day scores use, so a
+     question answered correctly in a past session never counts today */
+  if(typeof state.sessionRight !== "number") state.sessionRight = 0;
+  if(correct) state.sessionRight++;
+
   setSub();
 }
 
@@ -14759,19 +14831,37 @@ function next(){
     state.idx++;
     renderQuestion();
   } else {
-    var right = 0;
-    for(var i=0;i<state.list.length;i++){
-      var p = PROGRESS[state.list[i].id];
-      if(p && p.correct) right++;
-    }
+    /* score THIS session, not lifetime correctness of these question ids */
+    var right = (typeof state.sessionRight === "number") ? state.sessionRight : 0;
     var backPlan = "";
     if(state.planDay){
       var pl = planState();
-      pl.mcqScores[state.planDay] = { right: right, total: state.list.length };
-      pl.done[state.planDay] = true;   /* completing the MCQ set marks the day done */
+      var prev = pl.mcqScores[state.planDay];
+      var best = (prev && prev.best !== undefined) ? Math.max(prev.best, right) : right;
+      pl.mcqScores[state.planDay] = {
+        right: right, total: state.list.length, best: best,
+        attempts: (prev && prev.attempts ? prev.attempts : 0) + 1, at: Date.now()
+      };
+      if(!pl.done[state.planDay]){ pl.done[state.planDay] = true; }
+      if(!pl.completedAt) pl.completedAt = {};
+      if(!pl.completedAt[state.planDay]) pl.completedAt[state.planDay] = Date.now();
       planSave(pl);
       backPlan = '<button class="btn primary" data-go="plan">Back to plan</button>';
       state.planDay = 0;
+    }
+    else if(state.planChapDay){
+      /* content-day chapter drill: record the score for this chapter/day */
+      var pc = planState();
+      var day = state.planChapDay;
+      var chapId = state.list.length ? state.list[0].chapter : null;
+      if(chapId){
+        if(!pc.drilled) pc.drilled = {};
+        if(!pc.drilled[day]) pc.drilled[day] = {};
+        pc.drilled[day][chapId] = { right: right, total: state.list.length, at: Date.now() };
+        planSave(pc);
+      }
+      backPlan = '<button class="btn primary" data-planday="'+day+'">Back to day '+day+'</button>';
+      state.planChapDay = 0;
     }
     view.innerHTML =
       '<div class="card empty">' +
@@ -14976,7 +15066,13 @@ document.addEventListener("click", function(ev){
   if(t.hasAttribute && t.hasAttribute("data-chapter")){ startChapter(t.getAttribute("data-chapter")); return; }
   if(t.hasAttribute && t.hasAttribute("data-pick")){ pick(parseInt(t.getAttribute("data-pick"),10)); return; }
   if(t.hasAttribute && t.hasAttribute("data-planday")){ openPlanDay(parseInt(t.getAttribute("data-planday"),10)); return; }
-  if(t.hasAttribute && t.hasAttribute("data-planchap")){ startChapter(t.getAttribute("data-planchap")); return; }
+  if(t.hasAttribute && t.hasAttribute("data-planchap")){
+    if(t.hasAttribute("data-planchapday")){
+      state.pendingPlanChapDay = parseInt(t.getAttribute("data-planchapday"),10);
+    }
+    startChapter(t.getAttribute("data-planchap"));
+    return;
+  }
 
   if(t.id === "planStartToday"){
     var ps = planState(); var d0 = new Date(); d0.setHours(0,0,0,0);
