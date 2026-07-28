@@ -139,16 +139,21 @@
   .dayrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;cursor:pointer;
     background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
   .dayrow:hover{border-color:var(--accent)}
-  .dayrow.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-  .dayrow.done{opacity:.62}
+  .dayrow.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:var(--accent-soft)}
+  .dayrow.done{opacity:.72;border-left:3px solid var(--ok)}
+  .dayrow.done.today{opacity:1}
   .dnum{font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--muted);flex:none;width:30px}
-  .dbody{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+  .dbody{flex:1;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
   .dsubj{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tag{font:700 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.06em;padding:3px 6px;border-radius:5px;flex:none}
   .tag.mcq{background:var(--accent-soft,rgba(160,120,60,.15));color:var(--accent)}
   .tag.content{background:var(--line);color:var(--muted)}
+  .tag.today{background:var(--accent);color:#fff}
   .dscore{font:12px/1 ui-monospace,Menlo,monospace;color:var(--muted);flex:none}
-  .dcheck{color:var(--ok);font-weight:700;flex:none;width:16px;text-align:center}
+  .dscore.manual{font-style:italic}
+  .dcheck{font-weight:700;flex:none;width:16px;text-align:center;color:var(--line-strong)}
+  .dcheck.done{color:var(--ok)}
+  .dcheck.current{color:var(--accent)}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
   .chip{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:6px 12px;cursor:pointer;font-size:13px}
   .chip:hover{border-color:var(--accent)}
@@ -14417,8 +14422,12 @@ function planDayInfo(n){
 function currentPlanDay(){
   var p = planState();
   if(!p.startDate) return 0;                 /* not started */
-  var ms = Date.now() - p.startDate;
-  var d = Math.floor(ms / 86400000) + 1;     /* day 1 on start date */
+  /* Compare local calendar midnights (not a raw ms/86400000 divide) so a
+     DST transition day, which is 23 or 25 real hours, doesn't shift the
+     computed day off by one. */
+  var start = new Date(p.startDate); start.setHours(0,0,0,0);
+  var today = new Date(); today.setHours(0,0,0,0);
+  var d = Math.round((today.getTime() - start.getTime()) / 86400000) + 1;
   if(d < 1) d = 1; if(d > 100) d = 100;
   return d;
 }
@@ -14493,14 +14502,28 @@ function renderPlan(){
     var isToday = (n === today);
     var mcq = p.mcqScores[n];
     var badge = typ==="M" ? '<span class="tag mcq">MCQ</span>' : '<span class="tag content">Content</span>';
-    var score = mcq ? '<span class="dscore">'+mcq.right+'/'+mcq.total+'</span>' : "";
+    var score;
+    if(typ==="M"){
+      var mcqBest = mcq ? (mcq.best!==undefined ? mcq.best : mcq.right) : 0;
+      score = mcq ? '<span class="dscore">'+mcqBest+'/'+mcq.total+'</span>'
+            : (isDone ? '<span class="dscore manual">manual</span>' : "");
+    } else {
+      var drilledMap = (p.drilled && p.drilled[n]) ? p.drilled[n] : {};
+      var drilledCount = 0;
+      for(var dc=0;dc<subj.chapters.length;dc++){ if(drilledMap[subj.chapters[dc]]) drilledCount++; }
+      score = drilledCount>0 ? '<span class="dscore">'+drilledCount+'/'+subj.chapters.length+' drilled</span>' : "";
+    }
     var cls = "dayrow" + (isDone?" done":"") + (isToday?" today":"");
+    var todayTag = isToday ? '<span class="tag today">Today</span>' : "";
+    var statusMark = isDone ? '<span class="dcheck done" title="Complete">\u2713</span>'
+                    : (isToday ? '<span class="dcheck current" title="Today">\u25cf</span>'
+                    : '<span class="dcheck"></span>');
     cards +=
       '<button class="'+cls+'" data-planday="'+n+'">' +
         '<span class="dnum">'+n+'</span>' +
-        '<span class="dbody"><span class="dsubj">'+esc(subj.name)+'</span>'+badge+'</span>' +
+        '<span class="dbody"><span class="dsubj">'+esc(subj.name)+'</span>'+badge+todayTag+'</span>' +
         score +
-        '<span class="dcheck">'+(isDone?"\u2713":"")+'</span>' +
+        statusMark +
       '</button>';
   }
 
@@ -14561,13 +14584,21 @@ function openPlanDay(n){
   }
 
   var mcq = p.mcqScores[n];
+  var mcqLine = "";
+  if(mcq){
+    var mBest = mcq.best!==undefined ? mcq.best : mcq.right;
+    var attempts = mcq.attempts || 1;
+    mcqLine = '<p class="muted">Best MCQ score: '+mBest+'/'+mcq.total +
+      (attempts>1 ? ' \u00b7 '+attempts+' attempts (latest '+mcq.right+'/'+mcq.total+')' : '') +
+      '</p>';
+  }
   view.innerHTML =
     '<div class="card">' +
       '<div class="qmeta"><span>Day '+n+' \u00b7 '+PHASES[phase]+'</span>' +
         '<span>'+(typ==="M"?"MCQ":"Content")+'</span></div>' +
       '<h2 class="serif">'+esc(subj.name)+'</h2>' +
       body +
-      (mcq ? '<p class="muted">Last MCQ score: '+mcq.right+'/'+mcq.total+'</p>' : "") +
+      mcqLine +
       '<div class="planrow">' +
         '<button class="btn '+(isDone?'':'primary')+'" id="planToggleDone">'+(isDone?"Mark not done":"Mark day complete")+'</button>' +
         '<button class="btn" data-go="plan">Back to plan</button>' +
@@ -14858,6 +14889,20 @@ function next(){
         if(!pc.drilled) pc.drilled = {};
         if(!pc.drilled[day]) pc.drilled[day] = {};
         pc.drilled[day][chapId] = { right: right, total: state.list.length, at: Date.now() };
+        /* once every chapter for this content day has been drilled at
+           least once, auto-mark the day done — mirrors MCQ days, which
+           auto-complete when the quiz is finished. The manual toggle in
+           openPlanDay still lets the user override/undo this. */
+        var dinfo = planDayInfo(day);
+        if(dinfo){
+          var dsubj = SUBJECTS[dinfo[1]];
+          var allDrilled = dsubj.chapters.every(function(c){ return !!pc.drilled[day][c]; });
+          if(allDrilled && !pc.done[day]){
+            pc.done[day] = true;
+            if(!pc.completedAt) pc.completedAt = {};
+            pc.completedAt[day] = Date.now();
+          }
+        }
         planSave(pc);
       }
       backPlan = '<button class="btn primary" data-planday="'+day+'">Back to day '+day+'</button>';
