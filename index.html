@@ -82,7 +82,12 @@
   .noteP{font:11px/1 ui-monospace,Menlo,monospace;color:var(--muted);flex:none}
   .noteList{margin:0;padding:8px 16px 14px 34px;display:flex;flex-direction:column;gap:6px;background:var(--card)}
   .noteList li{font-size:14px;line-height:1.5}
+  .noteList li:has(.mnemonicPt){list-style:none;margin-left:-20px}
   .noteList .hlnum{color:var(--accent);font-weight:600}
+  .mnemonicPt{background:var(--accent-soft);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+  .mnemonicTitle{font-weight:700;color:var(--accent);margin-bottom:8px;font-size:14px}
+  .mnemonicItems{display:flex;flex-wrap:wrap;gap:6px}
+  .mchip{background:var(--card);border:1px solid var(--line-strong);border-radius:6px;padding:4px 9px;font-size:13px}
 
   /* generic card */
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -14713,6 +14718,85 @@ function hl(s){
   );
   return t;
 }
+/* A good chunk of note bullets are already written as a mnemonic
+   spelled out as a plain sentence, e.g. "The mnemonic CRASH PAD
+   summarizes MI complications: Cardiac rupture, Arrhythmia, Shock...".
+   Render those as a title + chip row instead of a run-on sentence —
+   no new data needed, just splitting text that's already there. */
+/* Split on commas but ignore ones nested inside parentheses, so an
+   item like "other Tumours (lymphoma, parathyroid)" stays one chip. */
+function splitTopLevel(s){
+  var items = [], depth = 0, cur = "";
+  for(var i=0;i<s.length;i++){
+    var ch = s[i];
+    if(ch === "(") depth++;
+    else if(ch === ")") depth = depth > 0 ? depth - 1 : 0;
+    if(ch === "," && depth === 0){ items.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  if(cur.trim()) items.push(cur);
+  return items;
+}
+function countUnclosedParens(s){
+  var depth = 0;
+  for(var i=0;i<s.length;i++){
+    if(s[i] === "(") depth++;
+    else if(s[i] === ")") depth = depth > 0 ? depth - 1 : 0;
+  }
+  return depth;
+}
+function renderPoint(text){
+  var mi = /\bmnemonic\b/i.exec(text);
+  /* only treat it as a standalone mnemonic bullet if "mnemonic" shows up
+     near the start — otherwise it's a passing parenthetical mention
+     inside an unrelated sentence, and title/items would end up sweeping
+     in prose that doesn't belong to the list. */
+  if(mi && mi.index <= 70){
+    var colonIdx = text.indexOf(":", mi.index);
+    if(colonIdx !== -1){
+      var title = text.slice(0, colonIdx);
+      var rest = text.slice(colonIdx + 1).trim();
+
+      /* if the mnemonic opened inside a "(" that's still unclosed at the
+         colon (e.g. "(mnemonic FDR: Flushing, Diarrhea, ...) requires..."),
+         the first ")" in rest actually closes THAT paren — cut there so
+         trailing prose after it doesn't get swept into the last chip. */
+      var carry = countUnclosedParens(title);
+      if(carry > 0){
+        var depth = carry;
+        for(var ci=0;ci<rest.length;ci++){
+          if(rest[ci] === "(") depth++;
+          else if(rest[ci] === ")"){ depth--; if(depth <= 0){ rest = rest.slice(0, ci); break; } }
+        }
+      }
+      /* an em-dash, semicolon, or a ". Capital" sentence break signals the
+         list is over and a trailing qualifier/second sentence follows. */
+      var cutAt = -1;
+      [rest.indexOf("—"), rest.indexOf(";")].forEach(function(idx){
+        if(idx !== -1 && (cutAt === -1 || idx < cutAt)) cutAt = idx;
+      });
+      var sentBreak = /\.\s+[A-Z]/.exec(rest);
+      if(sentBreak && (cutAt === -1 || sentBreak.index < cutAt)) cutAt = sentBreak.index;
+      if(cutAt !== -1) rest = rest.slice(0, cutAt);
+
+      rest = rest.replace(/\.$/, "").trim();
+      var items = splitTopLevel(rest)
+        .map(function(x){ return x.replace(/^and\s+/i, "").trim(); })
+        .filter(function(x){ return x.length > 0; });
+      if(items.length){
+        var stripPrefix = /^[A-Za-z0-9]{2,14}\s*-\s*(.+)$/.exec(items[0]);
+        if(stripPrefix) items[0] = stripPrefix[1];
+      }
+      if(items.length >= 3){
+        var chips = "";
+        for(var i=0;i<items.length;i++){ chips += '<span class="mchip">' + hl(items[i]) + '</span>'; }
+        return '<div class="mnemonicPt"><div class="mnemonicTitle">' + hl(title) + ':</div>' +
+               '<div class="mnemonicItems">' + chips + '</div></div>';
+      }
+    }
+  }
+  return hl(text);
+}
 function chapterName(id){
   for(var i=0;i<CHAPTERS.length;i++){ if(CHAPTERS[i].id === id) return CHAPTERS[i].name; }
   return id;
@@ -14867,7 +14951,7 @@ function openNotesChapter(id){
     var secId = "ns-" + id + "-" + s;
     jump += '<button class="jumpchip" data-jumpsec="' + secId + '">' + esc(sec.h) + '</button>';
     var pts = "";
-    for(var p=0;p<sec.pts.length;p++){ pts += '<li>' + hl(sec.pts[p]) + '</li>'; }
+    for(var p=0;p<sec.pts.length;p++){ pts += '<li>' + renderPoint(sec.pts[p]) + '</li>'; }
     body +=
       '<details class="noteSec" id="' + secId + '"' + (s===0 ? " open" : "") + '>' +
         '<summary><span class="noteH"><span>' + esc(sec.h) + '</span>' +
