@@ -64,13 +64,25 @@
   .tag.none{background:#f0eee8;color:var(--muted)}
 
   /* high-yield notes */
-  .noteSec{margin:16px 0;padding-top:14px;border-top:1px solid var(--line)}
-  .noteSec:first-of-type{margin-top:14px;padding-top:14px}
-  .noteH{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
-  .noteH span:first-child{font-weight:700;font-size:15px}
+  .jumpbar{margin:14px 0;padding:12px;background:var(--paper);border:1px solid var(--line);border-radius:9px}
+  .jumplist{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;max-height:140px;overflow-y:auto}
+  .jumpchip{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:4px 10px;
+    font-size:12px;cursor:pointer;text-align:left}
+  .jumpchip:hover{border-color:var(--accent)}
+  .jumpbtns{display:flex;gap:8px}
+  .noteSec{margin:8px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .noteSec summary{cursor:pointer;padding:10px 12px;background:var(--paper);list-style:none}
+  .noteSec summary::-webkit-details-marker{display:none}
+  .noteSec summary::marker{content:""}
+  .noteH{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .noteH::before{content:"▸";color:var(--muted);margin-right:8px;font-size:11px;
+    display:inline-block;transition:transform .15s}
+  .noteSec[open] .noteH::before{transform:rotate(90deg)}
+  .noteH span:first-child{font-weight:700;font-size:14.5px}
   .noteP{font:11px/1 ui-monospace,Menlo,monospace;color:var(--muted);flex:none}
-  .noteList{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+  .noteList{margin:0;padding:8px 16px 14px 34px;display:flex;flex-direction:column;gap:6px;background:var(--card)}
   .noteList li{font-size:14px;line-height:1.5}
+  .noteList .hlnum{color:var(--accent);font-weight:600}
 
   /* generic card */
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -14687,6 +14699,20 @@ function esc(s){
     .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
     .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
+/* Escape + lightweight highlight for note bullets: bolds a short leading
+   "Term:" label (common in definition-style points) and wraps numeric
+   thresholds/values with units so they pop out of the paragraph. Runs on
+   the already-escaped string, so it only ever matches plain ASCII the
+   escaping left untouched (digits, letters, %, -, /). */
+function hl(s){
+  var t = esc(s);
+  t = t.replace(/^([^:]{2,55}):\s/, "<b>$1:</b> ");
+  t = t.replace(
+    /\b\d+(?:[.,]\d+)?(?:\s?[-–]\s?\d+(?:[.,]\d+)?)?\s?(?:mmol\/L|mmHg|mg\/dL|mEq\/L|mcg|mg|kg|g\/L|IU|U\/L|bpm|msec|ms|mm|cm|kcal|%|years?|months?|weeks?|days?|hours?|minutes?|min)(?!\w)/g,
+    '<b class="hlnum">$&</b>'
+  );
+  return t;
+}
 function chapterName(id){
   for(var i=0;i<CHAPTERS.length;i++){ if(CHAPTERS[i].id === id) return CHAPTERS[i].name; }
   return id;
@@ -14835,28 +14861,40 @@ function openNotesChapter(id){
   if(!c){ go("notes"); return; }
   var secs = NOTES[id] || [];
 
-  var body = "";
+  var jump = "", body = "";
   for(var s=0;s<secs.length;s++){
     var sec = secs[s];
+    var secId = "ns-" + id + "-" + s;
+    jump += '<button class="jumpchip" data-jumpsec="' + secId + '">' + esc(sec.h) + '</button>';
     var pts = "";
-    for(var p=0;p<sec.pts.length;p++){ pts += '<li>' + esc(sec.pts[p]) + '</li>'; }
+    for(var p=0;p<sec.pts.length;p++){ pts += '<li>' + hl(sec.pts[p]) + '</li>'; }
     body +=
-      '<div class="noteSec">' +
-        '<div class="noteH"><span>' + esc(sec.h) + '</span>' +
-        (sec.p ? '<span class="noteP">p' + esc(sec.p) + '</span>' : "") + '</div>' +
+      '<details class="noteSec" id="' + secId + '"' + (s===0 ? " open" : "") + '>' +
+        '<summary><span class="noteH"><span>' + esc(sec.h) + '</span>' +
+        (sec.p ? '<span class="noteP">p' + esc(sec.p) + '</span>' : "") + '</span></summary>' +
         '<ul class="noteList">' + pts + '</ul>' +
-      '</div>';
+      '</details>';
   }
   if(!secs.length){
     body = '<p class="muted">Notes for this chapter have not been written yet.</p>';
   }
+  var jumpBar = secs.length > 1
+    ? '<div class="jumpbar">' +
+        '<div class="jumplist">' + jump + '</div>' +
+        '<div class="jumpbtns">' +
+          '<button class="btn tiny" id="notesExpandAll">Expand all</button>' +
+          '<button class="btn tiny" id="notesCollapseAll">Collapse all</button>' +
+        '</div>' +
+      '</div>'
+    : "";
 
   view.innerHTML =
     '<div class="card">' +
       '<div class="qmeta"><span>Toronto Notes p' + esc(c.pages) + '</span>' +
         '<span>High-Yield Notes</span></div>' +
       '<h2 class="serif">' + esc(c.name) + '</h2>' +
-      body +
+      jumpBar +
+      '<div id="notesBody">' + body + '</div>' +
       '<div class="planrow">' +
         '<button class="btn primary" data-chapter="' + esc(id) + '">Quiz this chapter</button>' +
         '<button class="btn" data-go="notes">Back to notes</button>' +
@@ -15230,6 +15268,11 @@ document.addEventListener("click", function(ev){
   if(t.hasAttribute && t.hasAttribute("data-pick")){ pick(parseInt(t.getAttribute("data-pick"),10)); return; }
   if(t.hasAttribute && t.hasAttribute("data-planday")){ openPlanDay(parseInt(t.getAttribute("data-planday"),10)); return; }
   if(t.hasAttribute && t.hasAttribute("data-noteschap")){ openNotesChapter(t.getAttribute("data-noteschap")); return; }
+  if(t.hasAttribute && t.hasAttribute("data-jumpsec")){
+    var secEl = document.getElementById(t.getAttribute("data-jumpsec"));
+    if(secEl){ secEl.open = true; secEl.scrollIntoView({block:"start", behavior:"smooth"}); }
+    return;
+  }
   if(t.hasAttribute && t.hasAttribute("data-planchap")){
     if(t.hasAttribute("data-planchapday")){
       state.pendingPlanChapDay = parseInt(t.getAttribute("data-planchapday"),10);
@@ -15260,6 +15303,12 @@ document.addEventListener("click", function(ev){
 
   switch(t.id){
     case "next": next(); break;
+    case "notesExpandAll":
+      Array.prototype.forEach.call(document.querySelectorAll("#notesBody details"), function(d){ d.open = true; });
+      break;
+    case "notesCollapseAll":
+      Array.prototype.forEach.call(document.querySelectorAll("#notesBody details"), function(d){ d.open = false; });
+      break;
     case "doImport": doImport(); break;
     case "doSample":
       var box = document.getElementById("paste");
