@@ -88,6 +88,20 @@
   .mnemonicTitle{font-weight:700;color:var(--accent);margin-bottom:8px;font-size:14px}
   .mnemonicItems{display:flex;flex-wrap:wrap;gap:6px}
   .mchip{background:var(--card);border:1px solid var(--line-strong);border-radius:6px;padding:4px 9px;font-size:13px}
+
+  /* compound-fact points: a bullet that crammed 3+ discrete facts into one
+     sentence, restructured into a lead term + checklist. Distinct from
+     .mnemonicPt's wrapping pill chips (short memorization tags) because
+     these items are full clinical phrases meant to be read top-to-bottom. */
+  .noteList li:has(.factPt){list-style:none;margin-left:-20px}
+  .factPt{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:0 9px 9px 0;padding:10px 12px}
+  .factLead{font-weight:700;color:var(--ink);margin-bottom:6px;font-size:14.5px}
+  .factItems{margin:0;padding:0 0 0 18px;display:flex;flex-direction:column;gap:4px}
+  .factItems li{font-size:14px;line-height:1.55}
+  .factItems li::marker{color:var(--accent);opacity:.7}
+  .factNote{margin-top:8px;padding-top:7px;border-top:1px dashed var(--line);
+    color:var(--muted);font-size:13px;line-height:1.5}
   .scaleWidget{margin:10px 0 14px;padding:11px 12px;background:var(--paper);border:1px solid var(--line);border-radius:9px}
   .scaleTitle{font-weight:700;font-size:13px;margin-bottom:9px}
   .scaleBar{display:flex;height:20px;border-radius:5px;overflow:hidden;gap:2px}
@@ -14950,7 +14964,9 @@ function countUnclosedParens(s){
   }
   return depth;
 }
-function renderPoint(text){
+function renderPoint(pt){
+  if(pt && typeof pt === "object") return renderStructuredPoint(pt);
+  var text = pt;
   var mi = /\bmnemonic\b/i.exec(text);
   /* only treat it as a standalone mnemonic bullet if "mnemonic" shows up
      near the start — otherwise it's a passing parenthetical mention
@@ -15001,6 +15017,20 @@ function renderPoint(text){
     }
   }
   return hl(text);
+}
+/* A bullet that crammed 3+ discrete facts into one sentence, already
+   restructured (by the extraction pass, not at render time) into a lead
+   term + checklist + optional trailing caveat. Distinct from the
+   mnemonicPt path above: these items are full clinical phrases meant to
+   be read top-to-bottom, not short memorization tags meant to wrap. */
+function renderStructuredPoint(pt){
+  var itemsHtml = "";
+  for(var i=0;i<pt.items.length;i++){ itemsHtml += '<li>' + hl(pt.items[i]) + '</li>'; }
+  return '<div class="factPt">' +
+    '<div class="factLead">' + hl(pt.lead) + '</div>' +
+    '<ul class="factItems">' + itemsHtml + '</ul>' +
+    (pt.note ? '<div class="factNote">' + hl(pt.note) + '</div>' : "") +
+    '</div>';
 }
 /* Colour steps from healthy to severe, sampled proportionally across
    however many bands a given scale has. */
